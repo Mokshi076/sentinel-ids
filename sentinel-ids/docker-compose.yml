@@ -1,0 +1,58 @@
+services:
+  kafka:
+    image: apache/kafka:3.8.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_NUM_PARTITIONS: 3
+  timescale:
+    image: timescale/timescaledb:latest-pg16
+    environment: {POSTGRES_USER: ids, POSTGRES_PASSWORD: ids, POSTGRES_DB: ids}
+    volumes: ["./db/init.sql:/docker-entrypoint-initdb.d/init.sql", "tsdata:/var/lib/postgresql/data"]
+  mongo:
+    image: mongo:7
+    volumes: ["mongodata:/data/db"]
+  ml:
+    build: ./services/ml
+    volumes: ["./services/ml/models:/app/models:ro"]
+    ports: ["8000:8000"]
+  gateway:
+    build: ./services/gateway
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      ML_URL: http://ml:8000
+      PG_URL: postgres://ids:ids@timescale:5432/ids
+      MONGO_URL: mongodb://mongo:27017
+      PORT: 3001
+    depends_on: [kafka, timescale, mongo, ml]
+    restart: unless-stopped
+    ports: ["3001:3001"]
+  dashboard:
+    build:
+      context: ./dashboard
+      args: {NEXT_PUBLIC_GATEWAY_URL: "http://localhost:3001"}
+    ports: ["3000:3000"]
+  producer:
+    profiles: ["producer"]
+    build: ./services/producer
+    environment: {KAFKA_BROKERS: "kafka:9092", CSV_PATH: /data/sample.csv, EPS: "500", LOOP: "1"}
+    volumes: ["./data:/data:ro"]
+    depends_on: [kafka]
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes: ["./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml", "./monitoring/alerts.yml:/etc/prometheus/alerts.yml"]
+    ports: ["9090:9090"]
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment: {GF_SECURITY_ADMIN_PASSWORD: admin}
+    volumes: ["./monitoring/grafana/provisioning:/etc/grafana/provisioning", "./monitoring/grafana/dashboards:/var/lib/grafana/dashboards"]
+    ports: ["3002:3000"]
+volumes: {tsdata: {}, mongodata: {}}

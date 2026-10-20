@@ -1,0 +1,34 @@
+
+# Python virtual environments
+.venv/
+venv/
+**/.venv/
+**/venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Generated ML model
+/sentinel-ids/services/ml/models/*.joblib
+
+# Generated sample data
+/sentinel-ids/data/*
+!/sentinel-ids/data/.gitkeep
+
+# Node dependencies and builds
+node_modules/
+.next/
+out/
+dist/
+build/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db
