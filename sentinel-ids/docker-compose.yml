@@ -32,6 +32,9 @@ services:
       PG_URL: postgres://ids:ids@timescale:5432/ids
       MONGO_URL: mongodb://mongo:27017
       PORT: 3001
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-env}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASS: ${ADMIN_PASS:-sentinel123}
     depends_on: [kafka, timescale, mongo, ml]
     restart: unless-stopped
     ports: ["3001:3001"]

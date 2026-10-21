@@ -26,7 +26,14 @@ Xtr_s = prep.fit_transform(Xtr); Xte_s = prep.transform(Xte)
 # 1) supervised: known attacks (class weights handle imbalance)
 clf = XGBClassifier(n_estimators=200, max_depth=6, learning_rate=0.1, tree_method="hist", n_jobs=-1, eval_metric="mlogloss")
 clf.fit(Xtr_s, ytr, sample_weight=compute_sample_weight("balanced", ytr))
-print(classification_report(yte, clf.predict(Xte_s), target_names=le.classes_))
+pred = clf.predict(Xte_s)
+print(classification_report(yte, pred, target_names=le.classes_))
+import json
+from sklearn.metrics import confusion_matrix
+REPORT = {"source": ", ".join(os.path.basename(f) for f in files[:5]), "rows": int(len(df)), "test_rows": int(len(yte)),
+          "labels": list(le.classes_), "report": classification_report(yte, pred, target_names=le.classes_, output_dict=True),
+          "confusion": confusion_matrix(yte, pred).tolist(),
+          "importances": sorted(zip(FEATURES, map(float, clf.feature_importances_)), key=lambda x: -x[1])[:15]}
 
 # 2) unsupervised: trained on BENIGN only -> flags zero-day outliers
 benign = Xtr_s[ytr == le.transform(["BENIGN"])[0]]
@@ -35,4 +42,5 @@ thr = float(np.percentile(iso.score_samples(benign), 1))
 
 os.makedirs("models", exist_ok=True)
 joblib.dump(dict(prep=prep, clf=clf, iso=iso, le=le, features=FEATURES, iso_thr=thr), "models/ids.joblib")
+json.dump(REPORT, open("models/report.json", "w"))
 print("saved models/ids.joblib with", len(FEATURES), "features")

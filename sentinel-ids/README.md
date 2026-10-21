@@ -78,3 +78,14 @@ docker-compose.yml  db/init.sql  data/
 services/{ml,producer,gateway}   dashboard/ (Next.js 14, Tailwind, Recharts)
 monitoring/{prometheus.yml,alerts.yml,grafana/}
 ```
+
+## Dashboard pages & login
+| Page | What it does |
+|---|---|
+| `/login` | JWT login. Default `admin` / `sentinel123` - change `ADMIN_USER`, `ADMIN_PASS`, `JWT_SECRET` via a `.env` file |
+| `/` | Live SOC dashboard (Socket.io, now requires login) |
+| `/alerts` | Searchable alert history from TimescaleDB + 30-minute trend |
+| `/model` | Accuracy, macro F1, per-class metrics, confusion matrix, feature importance (from `models/report.json`, regenerated on every `train.py` run) |
+| `/analyze` | Upload a flow CSV (max 30 MB, first 20k rows scored) and get predictions |
+
+The Kafka consumer restarts itself after a crash. The login is a single demo account with the password in an env var; for production use hashed passwords and a user table.

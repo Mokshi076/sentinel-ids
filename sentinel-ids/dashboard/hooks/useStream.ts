@@ -10,7 +10,8 @@ export function useStream() {
   const [totals, setTotals] = useState<Totals>({ total: 0, threats: 0, high: 0, medium: 0, low: 0 });
 
   useEffect(() => {
-    const s = io(process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:3001");
+    const s = io(process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:3001", { auth: { token: localStorage.getItem("token") } });
+    s.on("connect_error", (e) => { if (e.message === "unauthorized") { localStorage.removeItem("token"); location.href = "/login"; } });
     s.on("connect", () => setConnected(true));
     s.on("disconnect", () => setConnected(false));
     s.on("tick", (t: Tick) => {

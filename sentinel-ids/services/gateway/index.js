@@ -1,5 +1,6 @@
 import express from "express"; import http from "http"; import { Server } from "socket.io";
-import { Kafka } from "kafkajs"; import pg from "pg"; import { MongoClient } from "mongodb"; import prom from "prom-client";
+import { Kafka } from "kafkajs"; import pg from "pg"; import { MongoClient } from "mongodb"; import prom from "prom-client"; import jwt from "jsonwebtoken";
+process.on("unhandledRejection", e => console.error("unhandled:", e?.message || e));
 
 const env = (k, d) => process.env[k] ?? d;
 const ML = env("ML_URL", "http://localhost:8000"), CHUNK = +env("ML_BATCH", 256);
@@ -59,25 +60,44 @@ async function handle(events) {
   }
 }
 
-// ---- REST ----
+// ---- REST + auth ----
+const SECRET = env("JWT_SECRET", "change-me"), AU = env("ADMIN_USER", "admin"), AP = env("ADMIN_PASS", "sentinel123");
+const auth = (req, res, next) => { try { jwt.verify((req.headers.authorization || "").replace("Bearer ", ""), SECRET); next(); } catch { res.status(401).json({ error: "unauthorized" }); } };
+io.use((s, next) => { try { jwt.verify(s.handshake.auth?.token, SECRET); next(); } catch { next(new Error("unauthorized")); } });
+app.use((req, res, next) => {
+  res.set({ "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization,content-type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" });
+  if (req.method === "OPTIONS") return res.sendStatus(204); next(); });
+app.use(express.json());
 app.use((req, res, next) => { const end = httpLat.startTimer(); res.on("finish", () => end({ route: req.path })); next(); });
 app.get("/health", (_, res) => res.json({ ok: true }));
 app.get("/metrics", async (_, res) => { res.set("content-type", prom.register.contentType); res.end(await prom.register.metrics()); });
-app.get("/api/history", async (req, res) => {
+app.post("/api/login", (req, res) => {
+  const { username, password } = req.body || {};
+  if (username === AU && password === AP) return res.json({ token: jwt.sign({ u: username }, SECRET, { expiresIn: "8h" }) });
+  res.status(401).json({ error: "Invalid username or password" }); });
+app.get("/api/history", auth, async (req, res) => {
   const m = Math.min(+req.query.minutes || 30, 1440);
   const { rows } = await pool.query(`SELECT time_bucket('10 seconds',ts) AS t, count(*)::int AS total,
     count(*) FILTER (WHERE severity<>'none')::int AS threats FROM events WHERE ts > now() - ($1||' minutes')::interval GROUP BY t ORDER BY t`, [m]);
-  res.json(rows);
-});
-app.get("/api/alerts", async (req, res) => {
-  const { rows } = await pool.query(`SELECT * FROM events WHERE severity<>'none' ORDER BY ts DESC LIMIT $1`, [Math.min(+req.query.limit || 50, 500)]);
-  res.json(rows);
-});
+  res.json(rows); });
+app.get("/api/alerts", auth, async (req, res) => {
+  const { severity, label, q } = req.query, where = ["severity<>'none'"], args = [];
+  if (severity) { args.push(severity); where.push(`severity=$${args.length}`); }
+  if (label) { args.push(label); where.push(`label=$${args.length}`); }
+  if (q) { args.push(`%${q}%`); where.push(`src_ip ILIKE $${args.length}`); }
+  args.push(Math.min(+req.query.limit || 25, 500), +req.query.offset || 0);
+  const { rows } = await pool.query(`SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY ts DESC LIMIT $${args.length - 1} OFFSET $${args.length}`, args);
+  res.json(rows); });
+app.get("/api/model-report", auth, async (_, res) => {
+  try { const r = await fetch(ML + "/report"); res.status(r.status).json(await r.json()); } catch { res.status(502).json({ error: "ML service unavailable" }); } });
+app.post("/api/analyze", auth, express.text({ type: "*/*", limit: "30mb" }), async (req, res) => {
+  try { const r = await fetch(ML + "/analyze", { method: "POST", headers: { "content-type": "text/csv" }, body: req.body }); res.status(r.status).json(await r.json()); }
+  catch { res.status(502).json({ error: "ML service unavailable" }); } });
 
 // ---- boot ----
 await mongo.connect(); raw = mongo.db("ids").collection("raw_events");
 await raw.createIndex({ _at: 1 }, { expireAfterSeconds: 86400 });          // raw payloads auto-expire after 24h
-const consumer = new Kafka({ clientId: "ids-gateway", brokers: env("KAFKA_BROKERS", "localhost:9092").split(",") }).consumer({ groupId: "ids-gateway" });
+const consumer = new Kafka({ clientId: "ids-gateway", brokers: env("KAFKA_BROKERS", "localhost:9092").split(",") }).consumer({ groupId: "ids-gateway", retry: { restartOnFailure: async (e) => { console.error("consumer crashed, restarting:", e.message); return true; } } });
 await consumer.connect(); await consumer.subscribe({ topic: "raw-events", fromBeginning: false });
 await consumer.run({ eachBatch: async ({ batch }) => {
   const events = batch.messages.map(m => { try { return JSON.parse(m.value.toString()); } catch { return null; } }).filter(Boolean);
